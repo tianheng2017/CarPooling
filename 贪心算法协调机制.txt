@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
-import "./CarPooling.sol"; // 假设CarPooling是已经定义好的父合约
+import "./CarPooling.sol";
 
 contract CarPoolingCoordination is CarPooling {
     struct Passenger {
         uint256 id;
+        address passengerAddress;
         Location source;
         Location destination;
         uint8 preferredTravelTime;
@@ -14,59 +15,87 @@ contract CarPoolingCoordination is CarPooling {
         bool assigned;
     }
 
-    mapping(address => Passenger) public passengers;
+    // 存储所有乘客的信息
+    mapping(uint256 => Passenger) public passengers;
+    // 用于快速查找未分配的乘客
+    mapping(Location => mapping(Location => address[])) public unassignedPassengers;
+
     uint256 public nextPassengerId;
 
     function awaitAssignRide(Location _source, Location _destination, uint8 _preferredTravelTime) public payable onlyPassenger {
         require(msg.value > 0, "Deposit must be greater than zero.");
-        passengers[msg.sender] = Passenger(nextPassengerId++, _source, _destination, _preferredTravelTime, 0, msg.value, false);
+        uint256 passengerId = ++nextPassengerId;
+        passengers[passengerId] = Passenger(passengerId, msg.sender, _source, _destination, _preferredTravelTime, 0, msg.value, false);
+        unassignedPassengers[_source][_destination].push(msg.sender);
     }
 
     function assignPassengersToRides() public {
-        // 根据乘客的偏好时间和可用的行程进行分配
-        // 这里使用了一个简单的贪心算法，可能不是最优解，但提供了一个基本的实现思路
-        uint256 totalDeviation;
-        mapping(uint256, Ride) rides = this.rides(); // 假设rides()是父合约中定义的获取所有行程的函数
-        for (uint256 i = 0; i < rides.length; i++) {
-            Ride storage ride = rides[i];
-            if (ride.status == RideStatus.BookingOpen && ride.source == Location.A && ride.destination == Location.B) {
-                // 找到与行程匹配且未分配的乘客
-                address passengerAddress;
-                bool found;
-                while ((found = findUnassignedPassenger(ride.source, ride.destination, out passengerAddress))) {
-                    Passenger storage passenger = passengers[passengerAddress];
-                    // 分配乘客到行程
-                    assignPassengerToRide(passenger, ride);
-                    // 更新偏差统计
-                    totalDeviation += uint256(passenger.preferredTravelTime - ride.travelTime);
-                }
+        // 这里我们假设有一个函数getAllAvailableRides()可以获取所有可用的行程
+        // 并且这些行程已经按照时间排序
+        Ride[] memory availableRides = getAllAvailableRides();
+
+        for (uint256 i = 0; i < availableRides.length; i++) {
+            Ride memory ride = availableRides[i];
+            assignToRide(ride);
+        }
+    }
+
+    function assignToRide(Ride memory _ride) private {
+        // 从unassignedPassengers中找到所有匹配的未分配乘客
+        address[] storage unassignedForRide = unassignedPassengers[_rode.source][_rode.destination];
+        for (uint256 j = 0; j < unassignedForRide.length; j++) {
+            address passengerAddress = unassignedForRide[j];
+            Passenger storage passenger = passengers[passengerAddress];
+            if (!passenger.assigned && _ride.travelTime >= passenger.preferredTravelTime) {
+                // 分配乘客到行程
+                assignPassengerToRide(passenger, _ride);
+                // 从unassignedPassengers中移除已分配的乘客
+                unassignedForRide[j] = address(0);
             }
         }
-        // 打印或记录总偏差，以供评估
-        emit TotalTravelTimeDeviation(totalDeviation);
+        // 清除unassignedPassengers中的空地址
+        for (uint256 k = unassignedForRide.length - 1; k >= 0; k--) {
+            if (unassignedForRide[k] == address(0)) {
+                unassignedForRide.pop();
+            }
+        }
     }
 
-    function findUnassignedPassenger(Location _source, Location _destination, out address _passengerAddress) private returns (bool) {
-        // 这里需要一个有效的搜索机制来找到合适的乘客
-        // 为了简化，这里假设我们已经有了一个按源和目的地排序的乘客列表
-        // 并且我们知道如何找到第一个匹配的乘客
-        // 实际上，你可能需要一个更复杂的搜索算法或数据结构来实现这一点
-        // ...
-        // 假设找到了一个匹配的乘客
-        _passengerAddress = /* 找到的乘客的地址 */;
-        return true;
-    }
-
-    function assignPassengerToRide(Passenger storage _passenger, Ride storage _ride) private {
+    function assignPassengerToRide(Passenger storage _passenger, Ride memory _ride) private {
         // 更新乘客的实际旅行时间
         _passenger.actualTravelTime = _ride.travelTime;
         // 更新行程的座位和状态
-        // ...
+        // 这里需要调用父合约中更新行程的方法，假设为updateRideStatus()
+        updateRideStatus(_rode.id, _ride.seats - 1, RideStatus.FullyBooked);
         // 更新乘客的分配状态
         _passenger.assigned = true;
         // 处理退款逻辑，如果需要的话
+        // 这里假设退款函数为refundDeposit()
+        if (_passenger.deposit > _ride.pricePerSeat) {
+            refundDeposit(_passenger.passengerAddress, _passenger.deposit - _ride.pricePerSeat);
+        }
+        // 将乘客的存款转移到司机账户，这里假设转移函数为transferToDriver()
+        transferToDriver(_rode.driver, _ride.pricePerSeat);
+    }
+
+    // 以下是一些辅助函数的假设实现或占位符
+    function getAllAvailableRides() private view returns (Ride[] memory) {
+        // 实现获取所有可用行程的逻辑
         // ...
     }
 
-    event TotalTravelTimeDeviation(uint256 deviation);
+    function updateRideStatus(uint256 _rideId, uint8 _seats, RideStatus _status) private {
+        // 实现更新行程状态的逻辑
+        // ...
+    }
+
+    function refundDeposit(address _passengerAddress, uint256 _amount) private {
+        // 实现退款逻辑
+        // ...
+    }
+
+    function transferToDriver(address _driver, uint256 _amount) private {
+        // 实现将款项转移到司机账户的逻辑
+        // ...
+    }
 }
