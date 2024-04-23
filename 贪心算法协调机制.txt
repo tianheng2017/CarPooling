@@ -6,39 +6,49 @@ import "./CarPooling.sol";
 contract CarPoolingCoordination is CarPooling {
     // ... [Passenger struct and other parts remain the same]
 
+    // 假设我们有一个额外的映射来跟踪每个行程的剩余座位数
+    mapping(uint256 => uint8) public availableSeats;
+
     function assignPassengersToRides() public {
-        // 获取所有可预订的行程，按起始时间排序
-        Ride[] memory availableRides = getAllAvailableRides();
-        // 按行程的起始时间顺序进行分配
-        for (uint256 i = 0; i < availableRides.length; i++) {
-            if (availableRides[i].seats > 0) { // 确保行程还有剩余座位
-                assignToRide(availableRides[i]);
+        // 获取所有可预订的行程
+        Ride[] memory rides = getAllAvailableRides();
+        // 为每个行程分配乘客，直到没有剩余座位
+        for (uint256 i = 0; i < rides.length; i++) {
+            uint256 rideId = rides[i].id;
+            while (availableSeats[rideId] > 0) {
+                assignToRide(rides[i]);
+                // 如果没有剩余座位，跳出循环
+                if (availableSeats[rideId] == 0) break;
             }
         }
     }
 
     function assignToRide(Ride memory _ride) private {
-        address bestMatchPassenger;
-        uint256 minDeviation = type(uint256).max;
-        address[] storage unassignedPassengersList = getUnassignedPassengersList(_rode.source, _ride.destination);
+        // 查找最佳匹配的未分配乘客
+        (address bestMatchPassenger, uint256 minDeviation) = findBestMatch(_rode.source, _ride.destination);
+        if (bestMatchPassenger != address(0)) {
+            Passenger storage passenger = passengers[bestMatchPassenger];
+            assignPassengerToRide(passenger, _ride);
+            // 更新行程的剩余座位数
+            availableSeats[_rode.id]--;
+            // 更新总偏差
+            updateTotalDeviation(minDeviation);
+        }
+    }
 
-        for (uint256 j = 0; j < unassignedPassengersList.length; j++) {
-            address passengerAddress = unassignedPassengersList[j];
-            Passenger storage passenger = passengers[passengerAddress];
-            if (!passenger.assigned) {
+    function findBestMatch(Location _source, Location _destination) private view returns (address, uint256) {
+        (address bestMatchPassenger, uint256 minDeviation) = (address(0), type(uint256).max);
+        for (uint256 i = 0; i < nextPassengerId; i++) {
+            Passenger storage passenger = passengers[i];
+            if (!passenger.assigned && passenger.source == _source && passenger.destination == _destination) {
                 uint256 deviation = calculateDeviation(passenger.preferredTravelTime, _ride.travelTime);
                 if (deviation < minDeviation) {
                     minDeviation = deviation;
-                    bestMatchPassenger = passengerAddress;
+                    bestMatchPassenger = passenger.passengerAddress;
                 }
             }
         }
-
-        if (bestMatchPassenger != address(0)) {
-            Passenger storage selectedPassenger = passengers[bestMatchPassenger];
-            assignPassengerToRide(selectedPassenger, _ride);
-            updateTotalDeviation(minDeviation);
-        }
+        return (bestMatchPassenger, minDeviation);
     }
 
     function getUnassignedPassengersList(Location _source, Location _destination) private view returns (address[] storage) {
