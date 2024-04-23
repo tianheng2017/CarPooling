@@ -1,0 +1,100 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+contract CarPoolingCoordination is CarPooling {
+
+    // 乘客的偏好结构体
+    struct PassengerPreference {
+        address passenger;
+        Location source;
+        Location destination;
+        uint8 preferredTravelTime;
+        uint256 deposit;
+        bool assigned;
+    }
+
+    // 存储乘客的偏好
+    mapping(address => PassengerPreference) public passengerPreferences;
+
+    // 协调机制的函数
+    function awaitAssignRide(Location _source, Location _destination, uint8 preferredTravelTime) public payable onlyPassenger {
+        // 校验押金
+        require(msg.value >= minDeposit(), "Deposit must be sufficient");
+
+        // 更新乘客偏好
+        passengerPreferences[msg.sender] = PassengerPreference({
+            passenger: msg.sender,
+            source: _source,
+            destination: _destination,
+            preferredTravelTime: preferredTravelTime,
+            deposit: msg.value,
+            assigned: false
+        });
+
+        // 触发事件，可能需要根据实际情况添加更多信息
+        emit PassengerAwaitedAssignment(msg.sender, _source, _destination, preferredTravelTime, msg.value);
+    }
+
+    function assignPassengersToRides() public {
+        // 根据乘客的偏好和行程的可用性进行分配
+        for (address passengerAddress; bytes32(passengerAddress) != 0; ) {
+            PassengerPreference storage pref = passengerPreferences[passengerAddress];
+            require(!pref.assigned, "Passenger already assigned");
+
+            // 查找合适的行程
+            uint256[] memory rideIds = findRides(pref.source, pref.destination);
+            for (uint256 i = 0; i < rideIds.length; i++) {
+                Ride storage ride = rides[rideIds[i]];
+                if (ride.status == RideStatus.BookingOpen && 
+                    uint8(ride.travelTime) == pref.preferredTravelTime && 
+                    ride.availableSeats > 0) {
+                    
+                    // 分配乘客到行程
+                    ride.passengerAddr.push(passengerAddress);
+                    ride.availableSeats--;
+
+                    // 更新乘客状态
+                    pref.assigned = true;
+
+                    // 如果行程已满，则更新状态
+                    if (ride.availableSeats == 0) {
+                        ride.status = RideStatus.FullyBooked;
+                    }
+
+                    // 触发事件
+                    emit RideAssigned(rideIds[i], passengerAddress);
+
+                    // 如果所有乘客都已分配，停止循环
+                    if (allPassengersAssigned()) {
+                        break;
+                    }
+                }
+            }
+
+            // 移动到下一个未分配的乘客
+            passengerAddress = getNextUnassignedPassenger(passengerAddress);
+        }
+    }
+
+    // 辅助函数：确定最小押金
+    function minDeposit() public view returns (uint256) {
+        // 这里应返回行程的最低价，需要根据实际情况计算
+        return 1e18; // 以太币的最小单位（wei），实际应返回具体的计算值
+    }
+
+    // 辅助函数：检查是否所有乘客都已分配
+    function allPassengersAssigned() public view returns (bool) {
+        // 实现检查逻辑，返回所有乘客是否都已分配行程
+        return true; // 占位符，应实现具体的逻辑
+    }
+
+    // 辅助函数：获取下一个未分配的乘客地址
+    function getNextUnassignedPassenger(address currentPassenger) public view returns (address) {
+        // 实现逻辑以返回下一个未分配行程的乘客地址
+        return address(0); // 占位符，应实现具体的逻辑
+    }
+
+    // 添加事件以触发当乘客等待分配或被分配到行程
+    event PassengerAwaitedAssignment(address passenger, Location source, Location destination, uint8 preferredTravelTime, uint256 deposit);
+    event RideAssigned(uint256 rideId, address passenger);
+}
