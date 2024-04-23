@@ -4,77 +4,70 @@ pragma solidity ^0.8.0;
 import "./CarPooling.sol";
 
 contract CarPoolingCoordination is CarPooling {
-    struct Passenger {
-        uint256 id;
-        address passengerAddress;
-        Location source;
-        Location destination;
-        uint8 preferredTravelTime;
-        uint256 deposit;
-        bool assigned;
-    }
-
-    mapping(uint256 => Passenger) public passengers;
-    mapping(address => uint256) public nextPassengerId;
-    uint256 public totalDeviation;
-
-    event PassengerAssigned(uint256 passengerId, uint8 actualTravelTime, uint256 deviation);
-
-    function awaitAssignRide(Location _source, Location _destination, uint8 _preferredTravelTime) public payable onlyPassenger {
-        require(msg.value > 0, "Deposit must be greater than zero.");
-        uint256 passengerId = nextPassengerId[msg.sender]++;
-        passengers[passengerId] = Passenger(passengerId, msg.sender, _source, _destination, _preferredTravelTime, msg.value, false);
-    }
+    // ... [Passenger struct and other parts remain the same]
 
     function assignPassengersToRides() public {
-        // 假设getAllAvailableRides()返回所有可预订的行程，按起始时间排序
+        // 获取所有可预订的行程，按起始时间排序
         Ride[] memory availableRides = getAllAvailableRides();
+        // 按行程的起始时间顺序进行分配
         for (uint256 i = 0; i < availableRides.length; i++) {
-            assignToRide(availableRides[i]);
+            if (availableRides[i].seats > 0) { // 确保行程还有剩余座位
+                assignToRide(availableRides[i]);
+            }
         }
     }
 
     function assignToRide(Ride memory _ride) private {
-        // 寻找最佳匹配的未分配乘客
         address bestMatchPassenger;
         uint256 minDeviation = type(uint256).max;
-        for (uint256 passengerId = 0; passengerId < nextPassengerId[_rode.driver]; passengerId++) {
-            Passenger storage passenger = passengers[passengerId];
-            if (!passenger.assigned && passenger.source == _ride.source && passenger.destination == _ride.destination) {
-                uint256 deviation = uint256(_rode.travelTime) - uint256(passenger.preferredTravelTime);
+        address[] storage unassignedPassengersList = getUnassignedPassengersList(_rode.source, _ride.destination);
+
+        for (uint256 j = 0; j < unassignedPassengersList.length; j++) {
+            address passengerAddress = unassignedPassengersList[j];
+            Passenger storage passenger = passengers[passengerAddress];
+            if (!passenger.assigned) {
+                uint256 deviation = calculateDeviation(passenger.preferredTravelTime, _ride.travelTime);
                 if (deviation < minDeviation) {
                     minDeviation = deviation;
-                    bestMatchPassenger = passenger.passengerAddress;
+                    bestMatchPassenger = passengerAddress;
                 }
             }
         }
 
-        // 如果找到最佳匹配的乘客，则进行分配
         if (bestMatchPassenger != address(0)) {
-            Passenger storage passenger = passengers[nextPassengerId[bestMatchPassenger] - 1];
-            assignPassengerToRide(passenger, _ride);
-            totalDeviation += minDeviation;
-            emit PassengerAssigned(passenger.id, _ride.travelTime, minDeviation);
+            Passenger storage selectedPassenger = passengers[bestMatchPassenger];
+            assignPassengerToRide(selectedPassenger, _ride);
+            updateTotalDeviation(minDeviation);
         }
+    }
+
+    function getUnassignedPassengersList(Location _source, Location _destination) private view returns (address[] storage) {
+        // 根据行程的起始地和目的地获取未分配乘客列表
+        // 这个函数需要访问一个可以存储和检索这些信息的数据结构
+        // ...
+        return unassignedPassengers[_source][_destination];
+    }
+
+    function calculateDeviation(uint8 preferredTime, uint8 actualTime) private pure returns (uint256) {
+        // 计算偏好时间与实际时间的偏差
+        return uint256(actualTime) - uint256(preferredTime);
     }
 
     function assignPassengerToRide(Passenger storage _passenger, Ride memory _ride) private {
         // 更新乘客的实际旅行时间并标记为已分配
         _passenger.actualTravelTime = _ride.travelTime;
         _passenger.assigned = true;
+        // 更新行程的座位数
+        _rode.seats--;
         // 处理押金转移给司机
-        // 这里省略了具体的实现细节，需要根据实际情况来实现
-    }
-
-    // 以下是一些辅助函数的假设实现或占位符
-    function getAllAvailableRides() private view returns (Ride[] memory) {
-        // 实现获取所有可用行程的逻辑
         // ...
     }
 
-    // 确保onlyPassenger修饰符和CarPooling父合约中的其他必要部分已经正确实现
-    modifier onlyPassenger() {
-        require(isPassenger[msg.sender], "Caller must be a registered passenger");
-        _;
+    function updateTotalDeviation(uint256 deviation) private {
+        // 更新总的旅行时间偏差
+        totalDeviation += deviation;
+        emit TotalTravelTimeDeviation(totalDeviation);
     }
+
+    // ... [辅助函数和事件声明]
 }
