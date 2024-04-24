@@ -52,8 +52,8 @@ contract CarPooling {
     mapping(address => Passenger) internal passengers;
 
     // 全局唯一ID
-    uint id;
-    // 处于“开放预订”的拼车信息ID组
+    uint nextId;
+    // 处于“BookingOpen”状态的ID组
     uint[] bookingOpenIds;
 
     // 拼车订单创建事件
@@ -118,9 +118,9 @@ contract CarPooling {
         require(_origin != _destination, "The starting and ending points should be different");
 
         // 构建拼车订单
-        rides[id] = Ride({
+        rides[nextId] = Ride({
             // 拼车ID
-            rideId: id,
+            rideId: nextId,
             // 司机区块链地址
             driver: msg.sender,
             // 出行开始时间
@@ -143,12 +143,12 @@ contract CarPooling {
         
         // 标记该司机发起了拼车订单
         drivers[msg.sender].hasRide = true;
-        // push到处于“开放预订”的拼车信息ID组
-        bookingOpenIds.push(id);
+        // push到处于“BookingOpen”状态的ID组
+        bookingOpenIds.push(nextId);
         // 触发拼车订单创建事件
-        emit RideCreated(id, msg.sender, _travelTime, _availableSeats, _seatPrice, Location(_origin), Location(_destination));
+        emit RideCreated(nextId, msg.sender, _travelTime, _availableSeats, _seatPrice, Location(_origin), Location(_destination));
         // 全局唯一id自增
-        id++;
+        nextId++;
     }
 
     // 查询指定起点和终点的所有拼车订单ID
@@ -182,8 +182,8 @@ contract CarPooling {
 
     // 乘客拼车
     function joinRide(uint256 _rideId) public payable onlyPassenger passengerSingleRide{
-        // 校验订单ID
-        require(_rideId <= id, "rideId does not exist");
+        // 校验订单ID，不能超过当前最大订单ID
+        require(_rideId <= nextId, "rideId does not exist");
         // 校验金额
         require(msg.value == rides[_rideId].seatPrice, "Carpool price must be correct");
 
@@ -199,7 +199,6 @@ contract CarPooling {
         if (ride.availableSeats == 1) {
             // 变更订单状态：已满
             ride.status = RideStatus.FullyBooked;
-
             // 从bookingOpenIds中移除此ID
             for (uint256 i = 0; i < bookingOpenIds.length; i++) {
                 // 如果找到
@@ -214,22 +213,23 @@ contract CarPooling {
         }
         // 剩余座位数 - 1
         ride.availableSeats -= 1;
-        // push乘客地址
+        // 记录乘客地址
         ride.passengerAddr.push(msg.sender);
+        
         // 触发乘客拼车事件
         emit RideJoined(_rideId, msg.sender);
     }
 
-    // 司机启动
+    // 司机发车
     function startRide(uint256 _rideId) public onlyDriver{
         // 获取拼车订单
         Ride storage ride = rides[_rideId];
         // 校验订单状态
-        require(ride.status == RideStatus.FullyBooked, "The order status must be fully booked");
+        require(ride.status == RideStatus.FullyBooked, "The order status must be FullyBooked");
         // 校验司机
         require(ride.driver == msg.sender, "The driver can only start his own ride");
 
-        // 变更订单状态为已启动
+        // 变更订单状态为已发车
         ride.status = RideStatus.Started;
         // 触发发车事件
         emit RideStarted(_rideId);
@@ -240,7 +240,7 @@ contract CarPooling {
         // 获取拼车订单
         Ride storage ride = rides[_rideId];
         // 校验订单状态
-        require(ride.status == RideStatus.FullyBooked, "The order status must be fully booked");
+        require(ride.status == RideStatus.Started, "The order status must be Started");
         // 校验司机
         require(ride.driver == msg.sender, "The driver can only start his own ride");
 
@@ -274,10 +274,61 @@ contract CarPooling {
 
 contract CarPoolingCoordination is CarPooling {
 
-    // Your data structures here
+    // 等待分配结构体
+    struct PassengerWaitlist {
+        // 乘客地址
+        address passenger;
+        // 起点
+        Location source;
+        // 终点
+        Location destination;
+        // 期望时间
+        uint8 preferredTravelTime;
+        // 足够大的押金
+        uint256 deposit;
+        // 是否加入等待列表
+        bool isJoin;
+        // 是否分配成功
+        bool isAssigned;
+    }
 
-    function awaitAssignRide(Location _source, Location _destination, uint8 preferredTravelTime) public payable onlyPassenger {
-        // Your implementation here
+    // 等待分配唯一ID
+    uint nextAwaitId;
+
+    // 等待信息列表
+    mapping(uint => PassengerWaitlist) public passengerWaitlist;
+
+    // 等待ID组
+    uint[] awaitIds;
+
+    // 加入等待事件
+    event AwaitAssignRideJoined(address passenger);
+
+    function awaitAssignRide(Location _source, Location _destination, uint8 _preferredTravelTime) public payable onlyPassenger {
+        // pdf说：假设协调的乘客总是支付足够的押金，足以加入任何乘车（因此在分配乘车时不需要考虑这个因素），简单校验下即可
+        require(msg.value > 0, "Insufficient deposit");
+        // pdf说：一个乘客不能两次调用awaitAssignRide
+        require(passengerWaitlist[msg.sender].isJoin == false, "A passenger cannot call awaitAssignRide twice");
+
+        // 加入等待信息列表
+        passengerWaitlist[nextAwaitId] = PassengerWaitlist({
+            passenger: msg.sender,
+            source: _source,
+            destination: _destination,
+            preferredTravelTime: _preferredTravelTime,
+            deposit: msg.value,
+            isJoin: true,
+            isAssigned: false
+        });
+
+        // 加入等待ID组
+        awaitIds.push(nextAwaitId);
+
+        // 触发加入等待列表事件
+        emit AwaitAssignRideJoined(msg.sender);
+
+        // 唯一ID自增
+        nextAwaitId++;
     }
 
     function assignPassengersToRides() public {

@@ -1,83 +1,84 @@
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
+function assignPassengersToRides() public {
+    // 复制等待列表以避免在迭代时修改原始映射
+    PassengerWaitlist[] memory waitlist = new PassengerWaitlist[](passengerWaitlist.length);
+    for (address passengerAddr; passengerAddr < passengerWaitlist.length; ++passengerAddr) {
+        waitlist[passengerAddr] = passengerWaitlist[passengerAddr];
+    }
 
-import "./CarPooling.sol";
-
-contract CarPoolingCoordination is CarPooling {
-    // ... [Passenger struct and other parts remain the same]
-
-    // 假设我们有一个额外的映射来跟踪每个行程的剩余座位数
-    mapping(uint256 => uint8) public availableSeats;
-
-    function assignPassengersToRides() public {
-        // 获取所有可预订的行程
-        Ride[] memory rides = getAllAvailableRides();
-        // 为每个行程分配乘客，直到没有剩余座位
-        for (uint256 i = 0; i < rides.length; i++) {
-            uint256 rideId = rides[i].id;
-            while (availableSeats[rideId] > 0) {
-                assignToRide(rides[i]);
-                // 如果没有剩余座位，跳出循环
-                if (availableSeats[rideId] == 0) break;
+    // 排序乘客，优先考虑最接近首选时间的乘客
+    // 这里使用了一个简单的排序算法，根据需要可能需要更高效的排序方法
+    for (uint i = 0; i < waitlist.length - 1; i++) {
+        for (uint j = i + 1; j < waitlist.length; j++) {
+            if (waitlist[i].preferredTravelTime > waitlist[j].preferredTravelTime) {
+                // 交换两个乘客的位置
+                (waitlist[i], waitlist[j]) = (waitlist[j], waitlist[i]);
             }
         }
     }
 
-    function assignToRide(Ride memory _ride) private {
-        // 查找最佳匹配的未分配乘客
-        (address bestMatchPassenger, uint256 minDeviation) = findBestMatch(_rode.source, _ride.destination);
-        if (bestMatchPassenger != address(0)) {
-            Passenger storage passenger = passengers[bestMatchPassenger];
-            assignPassengerToRide(passenger, _ride);
-            // 更新行程的剩余座位数
-            availableSeats[_rode.id]--;
-            // 更新总偏差
-            updateTotalDeviation(minDeviation);
-        }
-    }
+    // 为每个乘客分配乘车
+    for (uint i = 0; i < waitlist.length; ++i) {
+        PassengerWaitlist storage passenger = waitlist[i];
+        if (passenger.isAssigned) continue;
 
-    function findBestMatch(Location _source, Location _destination) private view returns (address, uint256) {
-        (address bestMatchPassenger, uint256 minDeviation) = (address(0), type(uint256).max);
-        for (uint256 i = 0; i < nextPassengerId; i++) {
-            Passenger storage passenger = passengers[i];
-            if (!passenger.assigned && passenger.source == _source && passenger.destination == _destination) {
-                uint256 deviation = calculateDeviation(passenger.preferredTravelTime, _ride.travelTime);
-                if (deviation < minDeviation) {
-                    minDeviation = deviation;
-                    bestMatchPassenger = passenger.passengerAddress;
-                }
+        // 查找最接近首选时间的可用乘车
+        AvailableRide memory bestRide = findBestAvailableRide(passenger.source, passenger.destination, passenger.preferredTravelTime);
+
+        if (bestRide.isFullyBooked) {
+            // 如果没有找到合适的乘车，退还押金
+            payable(passengerAddr).transfer(passenger.deposit);
+            continue;
+        }
+
+        // 为乘客分配乘车
+        assignPassengerToRide(passenger, bestRide.rideId, bestRide.travelTime);
+    }
+}
+
+// 辅助函数，为乘客分配乘车
+function assignPassengerToRide(PassengerWaitlist storage passenger, uint256 rideId, uint8 travelTime) private {
+    // 更新乘客信息
+    passenger.isAssigned = true;
+    // 更新乘车的可用座位数
+    Ride storage ride = rides[rideId];
+    ride.availableSeats--;
+
+    // 如果乘车已满，更新状态并从可用乘车列表中移除
+    if (ride.availableSeats == 0) {
+        ride.status = RideStatus.FullyBooked;
+        for (uint i = 0; i < availableRides.length; i++) {
+            if (availableRides[i].rideId == rideId) {
+                availableRides[i] = availableRides[availableRides.length - 1];
+                availableRides.pop();
+                break;
             }
         }
-        return (bestMatchPassenger, minDeviation);
     }
 
-    function getUnassignedPassengersList(Location _source, Location _destination) private view returns (address[] storage) {
-        // 根据行程的起始地和目的地获取未分配乘客列表
-        // 这个函数需要访问一个可以存储和检索这些信息的数据结构
-        // ...
-        return unassignedPassengers[_source][_destination];
+    // 添加乘客到乘车的乘客列表
+    ride.passengerAddr.push(passengerAddr);
+
+    // 处理支付转移给司机
+    payable(ride.driver).transfer(passenger.deposit);
+
+    // 触发事件
+    emit RideJoined(rideId, passengerAddr);
+}
+
+// 辅助函数，查找最适合乘客的可用乘车
+function findBestAvailableRide(Location source, Location destination, uint8 preferredTravelTime) private view returns (AvailableRide memory) {
+    uint8 minDeviation = 255; // 假设一天有24小时，用255作为初始最大偏差值
+    AvailableRide memory bestRide;
+
+    for (AvailableRide storage ride : availableRides) {
+        if (ride.origin == source && ride.destination == destination && !ride.isFullyBooked) {
+            uint8 deviation = uint8(abs(int(preferredTravelTime) - int(ride.travelTime)));
+            if (deviation < minDeviation) {
+                minDeviation = deviation;
+                bestRide = ride;
+            }
+        }
     }
 
-    function calculateDeviation(uint8 preferredTime, uint8 actualTime) private pure returns (uint256) {
-        // 计算偏好时间与实际时间的偏差
-        return uint256(actualTime) - uint256(preferredTime);
-    }
-
-    function assignPassengerToRide(Passenger storage _passenger, Ride memory _ride) private {
-        // 更新乘客的实际旅行时间并标记为已分配
-        _passenger.actualTravelTime = _ride.travelTime;
-        _passenger.assigned = true;
-        // 更新行程的座位数
-        _rode.seats--;
-        // 处理押金转移给司机
-        // ...
-    }
-
-    function updateTotalDeviation(uint256 deviation) private {
-        // 更新总的旅行时间偏差
-        totalDeviation += deviation;
-        emit TotalTravelTimeDeviation(totalDeviation);
-    }
-
-    // ... [辅助函数和事件声明]
+    return bestRide;
 }
