@@ -8,7 +8,7 @@ contract CarPooling {
     // 拼车地点枚举
     enum Location {A, B, C}
 
-    // 拼车订单结构体
+    // 拼车信息结构体
     struct Ride {
         // 拼车ID
         uint256 rideId;
@@ -28,7 +28,7 @@ contract CarPooling {
         Location destination;
         // 状态：开放预订、已满、已开始、已完成
         RideStatus status;
-        // 该拼车订单的所有乘客
+        // 该拼车信息的所有乘客
         address [] passengerAddr;
     }
 
@@ -57,7 +57,7 @@ contract CarPooling {
     // 动态的保持较好的燃气消耗水平，避免for循环大范围的查找BookingOpen状态订单
     uint[] bookingOpenIds;
 
-    // 拼车订单创建事件
+    // 拼车信息创建事件
     event RideCreated(uint256 rideId, address driver, uint8 travelTime, uint8 availableSeats, uint256 seatPrice, Location origin, Location destination);
     // 预订成功事件
     event RideJoined(uint256 rideId, address passenger);
@@ -87,7 +87,7 @@ contract CarPooling {
         _;
     }
     modifier driverSingleRide(){
-        // 确保司机没有在订单未完成前多次创建拼车订单
+        // 确保司机没有在订单未完成前多次创建拼车信息
         require(!drivers[msg.sender].hasRide, "A driver can only create one ride");
         _;
     }
@@ -107,7 +107,7 @@ contract CarPooling {
         drivers[msg.sender] = Driver(true, false);
     }
 
-    // 司机创建拼车订单
+    // 司机创建拼车信息
     function createRide(uint8 _travelTime, uint8 _availableSeats, uint256 _seatPrice, Location _origin, Location _destination) public onlyDriver driverSingleRide{
         // 行程时间必须在0-23之间
         require(_travelTime >= 0 && _travelTime <= 23, "Travel time must be between 0 and 23");
@@ -117,10 +117,10 @@ contract CarPooling {
         require(_seatPrice > 0, "The seat price must be greater than 0");
         // 起点和终点不能相同
         require(_origin != _destination, "The starting and ending points should be different");
-        // 司机不能同时创建多个拼车订单
+        // 司机不能同时创建多个拼车信息
         require(drivers[msg.sender].hasRide == false, "A driver cannot create multiple rides simultaneously");
 
-        // 构建拼车订单
+        // 构建拼车信息
         rides[nextId] = Ride({
             // 拼车ID
             rideId: nextId,
@@ -144,19 +144,19 @@ contract CarPooling {
             passengerAddr: new address[](0)
         });
         
-        // 标记该司机创建了拼车订单
+        // 标记该司机创建了拼车信息
         drivers[msg.sender].hasRide = true;
 
         // push到bookingOpenIds中
         bookingOpenIds.push(nextId);
 
-        // 触发拼车订单创建事件
+        // 触发拼车信息创建事件
         emit RideCreated(nextId, msg.sender, _travelTime, _availableSeats, _seatPrice, Location(_origin), Location(_destination));
         // 全局唯一id自增
         nextId++;
     }
 
-    // 查询指定起点和终点的所有拼车订单ID
+    // 查询指定起点和终点的所有拼车信息ID
     // 这里的输出是按照travelTime从小到大排了序的
     function findRides(Location _source, Location _destination) public view returns (uint256[] memory) {
         require(_source != _destination, "The starting and ending points should be different");
@@ -250,7 +250,7 @@ contract CarPooling {
 
     // 司机发车
     function startRide(uint256 _rideId) public onlyDriver{
-        // 获取拼车订单信息
+        // 获取拼车信息信息
         Ride storage ride = rides[_rideId];
         // 订单状态必须是：FullyBooked
         require(ride.status == RideStatus.FullyBooked, "The order status must be FullyBooked");
@@ -266,7 +266,7 @@ contract CarPooling {
     // 司机完成订单
     // 不用考虑重入攻击，因为ride.status有状态改变，函数无法被同一个_rideId反复触发
     function completeRide(uint256 _rideId) public onlyDriver{
-        // 获取拼车订单信息
+        // 获取拼车信息信息
         Ride storage ride = rides[_rideId];
         // 订单状态必须是：Started
         require(ride.status == RideStatus.Started, "The order status must be Started");
@@ -344,7 +344,7 @@ contract CarPoolingCoordination is CarPooling {
         // 文中说：假设协调的乘客总是支付足够的押金，足以加入任何乘车（因此在协调乘车时不需要考虑这个因素），简单校验下即可
         require(msg.value > 0, "Insufficient deposit");
         // 文中说：一个乘客不能两次调用awaitAssignRide
-        // 另外也需要考虑：一个乘客不能joinRide的同时又awaitAssignRide，所以hasRide来处理刚好
+        // 另外也需要考虑：一个乘客不能joinRide的同时又awaitAssignRide，所以用hasRide来处理刚好
         require(passengers[msg.sender].hasRide == false, "Passenger has already joined a ride and cannot join another");
 
         // 加入等待协调的列表
@@ -373,8 +373,21 @@ contract CarPoolingCoordination is CarPooling {
 
     // 系统为乘客分配乘车
     // 目标是最小化乘客的首选和实际旅行时间偏差的差异之和
-    // 解决办法：先按乘客期望时间排序，再按司机发车时间排序，然后一一匹配，就能实现最小化差异之和了
+    // ，解决办法：要想实现总时间偏差最小，只需要保证单个乘客的时间偏差也是最小的就行，这样加起来肯定也是最小的
+    // ，那么进一步问题又变成：在座位数动态的情况下，究竟谁先去匹配，按照什么样的顺序去匹配，才能保证整体偏差最小
+    // ，道理都懂，但文中说：协调机制的目标是以一种节省燃气的方式最小化总旅行时间偏差
+    // ，所以就没法去浪费gas，穷举各种情况的总偏差来决定最终的方式，只能尽量选择折中的办法
+    // ，且明确告知了，不要超过24576 bytes限制，雪上加霜
     function assignPassengersToRides() public {
-        // Your implementation here
+        // 排序等待协调列表，按照preferredTravelTime从小到大排序
+        for (uint i = 1; i < awaitIds.length -1 ; i++) {
+            for (uint j = 1 ; j < awaitIds.length - i ; j++) {
+                if (passengerWaitlist[awaitIds[j -1]].preferredTravelTime > passengerWaitlist[awaitIds[j]].preferredTravelTime) {
+                    uint256 temp = awaitIds[j -1];
+                    awaitIds[j -1] = awaitIds[j];
+                    awaitIds[j] = temp;
+                }  
+            }  
+        }
     }
 }
