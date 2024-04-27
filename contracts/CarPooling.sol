@@ -1,6 +1,17 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
+library Tools {
+    // 计算绝对值
+    function abs(uint8 a, uint8 b) internal pure returns(uint8) {
+        if (a >= b) {
+            return a - b;
+        } else {
+            return b - a;
+        }
+    }
+}
+
 contract CarPooling {
 
     // 拼车状态枚举
@@ -52,12 +63,12 @@ contract CarPooling {
     mapping(address => Passenger) internal passengers;
 
     // 全局唯一ID
-    uint nextId;
+    uint public nextId;
     // 处于“BookingOpen”状态的ID组
-    // 动态的保持较好的燃气消耗水平，避免for循环大范围的查找BookingOpen状态订单
-    uint[] bookingOpenIds;
+    // 动态增减，避免for循环大范围的查找BookingOpen状态订单
+    uint[] public bookingOpenIds;
 
-    // 拼车信息创建事件
+    // 拼车创建事件
     event RideCreated(uint256 rideId, address driver, uint8 travelTime, uint8 availableSeats, uint256 seatPrice, Location origin, Location destination);
     // 预订成功事件
     event RideJoined(uint256 rideId, address passenger);
@@ -124,108 +135,73 @@ contract CarPooling {
         rides[nextId] = Ride({
             // 拼车ID
             rideId: nextId,
-            // 司机区块链地址
+            // 司机地址
             driver: msg.sender,
-            // 出行开始时间
+            // 出行时间
             travelTime: _travelTime,
             // 剩余座位数
             availableSeats: _availableSeats,
             // 总座位数
             totalSeats: _availableSeats,
-            // 座位单价
+            // 单价
             seatPrice: _seatPrice,
             // 起点
             origin: Location(_origin),
             // 终点
             destination: Location(_destination),
-            // 状态：开放预订、已满、已开始、已完成
+            // 开放预订状态
             status: RideStatus.BookingOpen,
-            // 预订该拼车的乘客数组
+            // 哪些乘客预定了
             passengerAddr: new address[](0)
         });
         
         // 标记该司机创建了拼车信息
         drivers[msg.sender].hasRide = true;
-
         // push到bookingOpenIds中
         bookingOpenIds.push(nextId);
-
         // 触发拼车信息创建事件
         emit RideCreated(nextId, msg.sender, _travelTime, _availableSeats, _seatPrice, Location(_origin), Location(_destination));
         // 全局唯一id自增
         nextId++;
     }
 
-    // 查询指定起点和终点的所有拼车信息ID
-    // 这里的输出是按照travelTime从小到大排了序的
+    // 查询指定起点和终点的所有拼车订单ID
     function findRides(Location _source, Location _destination) public view returns (uint256[] memory) {
+        // 起点终点不能相同
         require(_source != _destination, "The starting and ending points should be different");
-
-        // 符合条件的订单数量，也可作为索引使用，反正从0开始的
+        // 计算符合条件的订单数量
         uint256 count = 0;
-        // 临时数组，用于存储符合条件的ID
-        uint256[] memory bookingOpenIdsTemp = new uint256[](bookingOpenIds.length);
-
         for (uint256 i = 0; i < bookingOpenIds.length; i++) {
             Ride storage ride = rides[bookingOpenIds[i]];
             if (ride.origin == _source && ride.destination == _destination && ride.status == RideStatus.BookingOpen) {
-                // 将符合条件的ID放入临时数组
-                bookingOpenIdsTemp[count] = ride.rideId;
                 count++;
-            }  
-        }  
-
-        // 如果没有找到符合条件的订单，则直接返回空数组
-        if (count == 0) {
-            return new uint256[](0);
+            }
         }
-    
-        // 最终的订单ID数组
-        uint256[] memory rideIds = new uint256[](count);
-
-        // 将临时数组中的ID复制到最终数组
-        for (uint256 i = 0; i < count; i++) {
-            rideIds[i] = bookingOpenIdsTemp[i];
-        }
-
-        // 使用冒泡排序对rideIds按照travelTime进行排序
-        for (uint256 i = 0; i < count - 1; i++) {
-            for (uint256 j = 0; j < count - i - 1; j++) {
-                Ride storage rideJ = rides[rideIds[j]];
-                Ride storage rideJPlusOne = rides[rideIds[j + 1]];
-                if (rideJ.travelTime > rideJPlusOne.travelTime) {
-                    // 交换rideIds中的元素
-                    uint256 temp = rideIds[j];
-                    rideIds[j] = rideIds[j + 1];
-                    rideIds[j + 1] = temp;
-                }
+        // 创建定长内存数组存储所有符合条件的订单ID
+        uint[] memory rideIds = new uint256[](count);
+        // 再次遍历，将符合条件的ID复制到内存数组中
+        uint256 index = 0;
+        for (uint256 i = 0; i < bookingOpenIds.length; i++) {
+            Ride storage ride = rides[bookingOpenIds[i]];
+            if (ride.origin == _source && ride.destination == _destination && ride.status == RideStatus.BookingOpen) {
+                rideIds[index] = ride.rideId;
+                index++;
             }
         }
 
-        // 返回排序后的订单ID数组
         return rideIds;
     }
 
-    // 乘客拼车
-    function joinRide(uint256 _rideId) public payable onlyPassenger passengerSingleRide{
-        // 校验订单ID，不能超过当前最大订单ID
-        require(_rideId <= nextId, "rideId does not exist");
-        // 支付金额必须等于单价
-        require(msg.value == rides[_rideId].seatPrice, "Carpool price must be correct");
-        // 乘客不能同时拼多个车
-        require(passengers[msg.sender].hasRide == false, "A passenger cannot join multiple rides simultaneously");
+    // 乘客拼车逻辑（抽出来方便复用）
+    function _joinRide(uint256 _rideId, address _user) internal {
         // 拿到订单信息
         Ride storage ride = rides[_rideId];
-        // 订单状态必须是BookingOpen
-        require(ride.status == RideStatus.BookingOpen, "Carpool status must be BookingOpen");
-        // 剩余座位数量必须大于0
-        require(ride.availableSeats > 0, "There must be remaining seats in the ride");
 
         // 变更乘客拼车状态
-        passengers[msg.sender].hasRide = true;
-        // 记录乘客地址
-        ride.passengerAddr.push(msg.sender);
-        
+        passengers[_user].hasRide = true;
+        // push乘客地址
+        ride.passengerAddr.push(_user);
+
         // 如果是最后一个座位
         if (ride.availableSeats == 1) {
             // 变更订单状态：已满
@@ -243,7 +219,25 @@ contract CarPooling {
 
         // 剩余座位数 - 1
         ride.availableSeats -= 1;
-        
+    }
+
+    // 乘客拼车
+    function joinRide(uint256 _rideId) public payable onlyPassenger passengerSingleRide{
+        // 校验订单ID，不能超过当前最大订单ID
+        require(_rideId <= nextId, "rideId does not exist");
+        // 支付金额必须等于单价
+        require(msg.value == rides[_rideId].seatPrice, "Carpool price must be correct");
+        // 乘客不能同时拼多个车
+        require(passengers[msg.sender].hasRide == false, "A passenger cannot join multiple rides simultaneously");
+        // 拿到订单信息
+        Ride storage ride = rides[_rideId];
+        // 订单状态必须是BookingOpen
+        require(ride.status == RideStatus.BookingOpen, "Carpool status must be BookingOpen");
+        // 剩余座位数量必须大于0
+        require(ride.availableSeats > 0, "There must be remaining seats in the ride");
+
+        // 执行拼车逻辑
+        _joinRide(_rideId, msg.sender);
         // 触发乘客拼车事件
         emit RideJoined(_rideId, msg.sender);
     }
@@ -264,7 +258,6 @@ contract CarPooling {
     }
 
     // 司机完成订单
-    // 不用考虑重入攻击，因为ride.status有状态改变，函数无法被同一个_rideId反复触发
     function completeRide(uint256 _rideId) public onlyDriver{
         // 获取拼车信息信息
         Ride storage ride = rides[_rideId];
@@ -281,10 +274,8 @@ contract CarPooling {
         for (uint i = 0;i < ride.passengerAddr.length;i++) {
             passengers[ride.passengerAddr[i]].hasRide = false;
         }
-
         // 司机获得收益 = 人数 * 单价
         payable(ride.driver).transfer(ride.seatPrice * ride.totalSeats);
-
         // 触发订单完成事件
         emit RideCompleted(_rideId);
     }
@@ -307,10 +298,11 @@ contract CarPooling {
 // ----------------------------------- Coordination -----------------------------------
 
 contract CarPoolingCoordination is CarPooling {
+    using Tools for uint8;
 
-    // 等待协调结构体
-    struct PassengerWaitlist {
-        // 等待协调ID
+    // 待协调结构体
+    struct PassengerWait {
+        // 待协调ID
         uint256 awaitId;
         // 乘客地址
         address passenger;
@@ -322,24 +314,33 @@ contract CarPoolingCoordination is CarPooling {
         uint8 preferredTravelTime;
         // 足够大的押金
         uint256 deposit;
-        // 是否已协调
-        bool isAssigned;
+        // 拼车ID
+        uint256 rideId;
+        // 退款金额
+        uint256 refund;
     }
 
-    // 等待协调唯一ID
-    uint nextAwaitId;
+    // 偏差结构体
+    struct Deviation {
+        // 数据索引
+        uint256 index;
+        // 偏差值
+        uint8 data;
+        // 拼车ID
+        uint256 rideId;
+    }
 
-    // 等待数据列表映射
-    mapping(uint => PassengerWaitlist) public passengerWaitlist;
+    // 待协调唯一ID
+    uint public nextAwaitId;
 
-    // 等待的ID组
-    // 比使用PassengerWaitlist[]好，gas消耗更少
-    uint[] awaitIds;
+    // 待协调数据列表映射
+    mapping(uint => PassengerWait) public passengerWaitlist;
 
-    // 等待协调事件
-    event AwaitAssignRideJoined(address passenger);
+    // 待协调ID组
+    // 比使用PassengerWait[]好，gas消耗更少
+    uint[] public awaitIds;
 
-    // 乘客选择等待协调
+    // 乘客选择协调
     function awaitAssignRide(Location _source, Location _destination, uint8 _preferredTravelTime) public payable onlyPassenger {
         // 文中说：假设协调的乘客总是支付足够的押金，足以加入任何乘车（因此在协调乘车时不需要考虑这个因素），简单校验下即可
         require(msg.value > 0, "Insufficient deposit");
@@ -347,47 +348,88 @@ contract CarPoolingCoordination is CarPooling {
         // 另外也需要考虑：一个乘客不能joinRide的同时又awaitAssignRide，所以用hasRide来处理刚好
         require(passengers[msg.sender].hasRide == false, "Passenger has already joined a ride and cannot join another");
 
-        // 加入等待协调的列表
-        passengerWaitlist[nextAwaitId] = PassengerWaitlist({
+        // 加入待协调的列表
+        passengerWaitlist[nextAwaitId] = PassengerWait({
             awaitId: nextAwaitId,
             passenger: msg.sender,
             source: _source,
             destination: _destination,
             preferredTravelTime: _preferredTravelTime,
             deposit: msg.value,
-            isAssigned: false
+            rideId: 0,
+            refund: 0
         });
 
         // push到等待的ID组
         awaitIds.push(nextAwaitId);
-
         // 改变乘客状态
-        passengers[msg.sender].hasRide == true;
-
-        // 触发加入等待协调事件
-        emit AwaitAssignRideJoined(msg.sender);
-
-        // 等待协调唯一ID自增
+        passengers[msg.sender].hasRide = true;
+        // 待协调唯一ID自增
         nextAwaitId++;
     }
 
     // 系统为乘客分配乘车
-    // 目标是最小化乘客的首选和实际旅行时间偏差的差异之和
+    // 目标是：最小化乘客的首选和实际旅行时间偏差的差异之和
     // ，解决办法：要想实现总时间偏差最小，只需要保证单个乘客的时间偏差也是最小的就行，这样加起来肯定也是最小的
-    // ，那么进一步问题又变成：在座位数动态的情况下，究竟谁先去匹配，按照什么样的顺序去匹配，才能保证整体偏差最小
-    // ，道理都懂，但文中说：协调机制的目标是以一种节省燃气的方式最小化总旅行时间偏差
-    // ，所以就没法去浪费gas，穷举各种情况的总偏差来决定最终的方式，只能尽量选择折中的办法
-    // ，且明确告知了，不要超过24576 bytes限制，雪上加霜
+    // ，那么进一步问题又变成：在座位数动态的情况下，怎样去匹配才能保证整体偏差最小
+    // ，我的处理方法是：模拟让每一个待协调的人都去和还有座位的bookingOpenIds求绝对值，最后取其中最小一个值，把人分配上去
     function assignPassengersToRides() public {
-        // 排序等待协调列表，按照preferredTravelTime从小到大排序
-        for (uint i = 1; i < awaitIds.length -1 ; i++) {
-            for (uint j = 1 ; j < awaitIds.length - i ; j++) {
-                if (passengerWaitlist[awaitIds[j -1]].preferredTravelTime > passengerWaitlist[awaitIds[j]].preferredTravelTime) {
-                    uint256 temp = awaitIds[j -1];
-                    awaitIds[j -1] = awaitIds[j];
-                    awaitIds[j] = temp;
-                }  
-            }  
+        // 循环处理待协调ids
+        for (uint256 i = 0; i < awaitIds.length; i++) {
+            // 获得乘客信息
+            PassengerWait storage passengerWait = passengerWaitlist[awaitIds[i]];
+            // 创建一个内存数组，并查询有哪些拼车数据与该乘客起点、终点一致
+            uint256[] memory tempRides = findRides(passengerWait.source, passengerWait.destination);
+
+            // 如果没有，该用户全额退还押金
+            if (tempRides.length == 0) {
+                payable(passengerWait.passenger).transfer(passengerWait.deposit);
+                // 登记退款金额
+                passengerWait.refund = passengerWait.deposit;
+                continue;
+            }
+
+            // 创建一个内存数组储存偏差
+            Deviation[] memory deviation = new Deviation[](tempRides.length);
+
+            // 依次计算该乘客与tempRides各数据的时间偏差
+            for (uint256 j = 0; j < tempRides.length; j++) {
+                Ride storage tempRide = rides[tempRides[j]];
+                deviation[j] = Deviation({
+                    index: j,
+                    data: tempRide.travelTime.abs(passengerWait.preferredTravelTime),
+                    rideId: tempRides[j]
+                });
+            }
+
+            // 默认第一个数据是最小的时间偏差
+            // 对应文中：如果可用的行程与乘客的起点和目的地匹配，无论旅行时间偏差如何，都必须将乘客分配到该行程。如果做不到这一点，将导致非常低的分数
+            uint256 minIndex = deviation[0].index;
+            uint256 min = deviation[0].data;
+            uint256 minRideId = deviation[0].rideId;
+            // 如果找到更小的，以更小的为准
+            for (uint k = 0; k < deviation.length; k++) {
+                if (deviation[k].data < min) {
+                    min = deviation[k].data;
+                    minIndex = deviation[k].index;
+                    minRideId = deviation[k].rideId;
+                }
+            }
+
+            // 最后把乘客分配到这个最小的上面
+            // 执行拼车逻辑，更新可用座位、乘客地址，以及可能的行程状态
+            _joinRide(minRideId, passengerWait.passenger);
+
+            // 乘客有多余的押金，需要退回差额
+            if (passengerWait.deposit > rides[minRideId].seatPrice) {
+                uint refund = passengerWait.deposit - rides[minRideId].seatPrice;
+                payable(passengerWait.passenger).transfer(refund);
+                // 登记退款金额
+                passengerWait.refund = refund;
+            }
+
+            // 登记拼车ID
+            passengerWait.rideId = minRideId;
         }
     }
 }

@@ -1,13 +1,13 @@
-# Sample Hardhat Project
+# 测试方法
 
-This project demonstrates a basic Hardhat use case. It comes with a sample contract, a test for that contract, and a Hardhat Ignition module that deploys that contract.
+1、安装nodejs
+https://nodejs.org/
 
-Try running some of the following tasks:
-
+2、安装hardhat
 ```shell
-npx hardhat help
+npm install --save-dev hardhat 或者 yarn add --dev hardhat
+```
+3、运行测试用例
+```shell
 npx hardhat test
-REPORT_GAS=true npx hardhat test
-npx hardhat node
-npx hardhat ignition deploy ./ignition/modules/Lock.js
 ```
