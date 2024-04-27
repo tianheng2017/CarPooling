@@ -283,6 +283,44 @@ describe("CarPooling and carPoolingCoordination", function () {
     it("测试assignPassengersToRides函数3", async function () {
         // user1注册为司机
         await carPoolingCoordination.connect(user1).driverRegister();
+        // user1创建拼车，8点出发、1个座位、单价10ETH、路线A->B
+        await carPoolingCoordination.connect(user1).createRide(8, 1, ethers.parseEther("10"), 0, 1);
+
+        // user2注册为司机
+        await carPoolingCoordination.connect(user2).driverRegister();
+        // user2创建拼车，14点出发、1个座位、单价10ETH、路线A->B
+        await carPoolingCoordination.connect(user2).createRide(14, 1, ethers.parseEther("10"), 0, 1);
+
+        // user4注册为乘客
+        await carPoolingCoordination.connect(user4).passengerRegister();
+        // user4选择协调，路线A->B，期望10点出发
+        await carPoolingCoordination.connect(user4).awaitAssignRide(0, 1, 10, { value: ethers.parseEther("10") });
+
+        // user5注册为乘客
+        await carPoolingCoordination.connect(user5).passengerRegister();
+        // user5选择协调，路线A->B，期望6点出发
+        await carPoolingCoordination.connect(user5).awaitAssignRide(0, 1, 6, { value: ethers.parseEther("10") });
+
+        // 系统调用assignPassengersToRides为乘客分配乘车
+        await carPoolingCoordination.assignPassengersToRides();
+
+        // 校验user4退款金额是否为0
+        await carPoolingCoordination.connect(user4).passengerWaitlist(0).then((result) => {
+            // 是否分配到user2车上
+            expect(result.rideId).to.equal(1);
+        })
+
+        // 校验user5退款金额是否为10
+        await carPoolingCoordination.connect(user5).passengerWaitlist(1).then((result) => {
+            // 是否分配到user1车上
+            expect(result.rideId).to.equal(0);
+        })
+    });
+
+    // 新增的代码
+    it("测试assignPassengersToRides函数4", async function () {
+        // user1注册为司机
+        await carPoolingCoordination.connect(user1).driverRegister();
         // user1创建拼车，4点出发、1个座位、单价10ETH、路线A->B
         await carPoolingCoordination.connect(user1).createRide(4, 1, ethers.parseEther("10"), 0, 1);
 

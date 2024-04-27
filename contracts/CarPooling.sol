@@ -372,8 +372,27 @@ contract CarPoolingCoordination is CarPooling {
     // 目标是：最小化乘客的首选和实际旅行时间偏差的差异之和
     // ，解决办法：要想实现总时间偏差最小，只需要保证单个乘客的时间偏差也是最小的就行，这样加起来肯定也是最小的
     // ，那么进一步问题又变成：在座位数动态的情况下，怎样去匹配才能保证整体偏差最小
-    // ，我的处理方法是：模拟让每一个待协调的人都去和还有座位的bookingOpenIds求绝对值，最后取其中最小一个值，把人分配上去
+    // ，我的处理方法是：先把待协调乘客按照期望时间从小到大排序，然后模拟让每个待协调人都去与有剩余座位的bookingOpenIds求绝对值，最后取其中最小一个值，把人分配上去
     function assignPassengersToRides() public {
+        // 必须有待协调的乘客
+        require(awaitIds.length > 0, "No passengers waiting for a ride");
+        // 必须有bookingOpen状态的拼车
+        require(bookingOpenIds.length > 0, "No rides available");
+
+        // 待协调乘客按照期望时间从小到大排序
+        for (uint i = 0; i < awaitIds.length - 1; i++) {
+            for (uint j = 0; j < awaitIds.length - i - 1; j++) {
+                uint time_a = passengerWaitlist[awaitIds[j]].preferredTravelTime;
+                uint time_b = passengerWaitlist[awaitIds[j + 1]].preferredTravelTime;
+                if (time_a > time_b) {
+                    // 交换 awaitIds 中的元素
+                    uint256 temp = awaitIds[j];
+                    awaitIds[j] = awaitIds[j + 1];
+                    awaitIds[j + 1] = temp;
+                }
+            }
+        }
+
         // 循环处理待协调ids
         for (uint256 i = 0; i < awaitIds.length; i++) {
             // 获得乘客信息
@@ -394,20 +413,18 @@ contract CarPoolingCoordination is CarPooling {
 
             // 依次计算该乘客与tempRides各数据的时间偏差
             for (uint256 j = 0; j < tempRides.length; j++) {
-                Ride storage tempRide = rides[tempRides[j]];
                 deviation[j] = Deviation({
                     index: j,
-                    data: tempRide.travelTime.abs(passengerWait.preferredTravelTime),
+                    data: rides[tempRides[j]].travelTime.abs(passengerWait.preferredTravelTime),
                     rideId: tempRides[j]
                 });
             }
 
-            // 默认第一个数据是最小的时间偏差
+            // 默认第一个数据是最小的时间偏差，如果找到更小的，以更小的为准
             // 对应文中：如果可用的行程与乘客的起点和目的地匹配，无论旅行时间偏差如何，都必须将乘客分配到该行程。如果做不到这一点，将导致非常低的分数
             uint256 minIndex = deviation[0].index;
             uint256 min = deviation[0].data;
             uint256 minRideId = deviation[0].rideId;
-            // 如果找到更小的，以更小的为准
             for (uint k = 0; k < deviation.length; k++) {
                 if (deviation[k].data < min) {
                     min = deviation[k].data;
