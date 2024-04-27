@@ -213,6 +213,7 @@ contract CarPooling {
                     bookingOpenIds[i] = bookingOpenIds[bookingOpenIds.length - 1];
                     // 再弹出最后一位，达到remove元素的目的
                     bookingOpenIds.pop();
+					break;
                 }
             }
         }
