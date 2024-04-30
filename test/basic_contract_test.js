@@ -111,10 +111,10 @@ describe("CarPooling and carPoolingCoordination", function () {
         await carPooling.connect(user2).passengerRegister();
         // Check: Registered passenger should not be able to join a ride with invalid parameters
         await expect(carPooling.connect(user2).joinRide(1)).to.be.reverted;
-        await expect(carPooling.connect(user2).joinRide(0, {value: ethers.parseEther("9")})).to.be.reverted;
+        await expect(carPooling.connect(user2).joinRide(0, { value: ethers.parseEther("9") })).to.be.reverted;
         // Check: Registered passenger should be able to join a ride with valid parameters and emit RideJoined event
         balanceBefore = await ethers.provider.getBalance(carPooling.getAddress());
-        await expect(carPooling.connect(user2).joinRide(0, {value: ethers.parseEther("10")})).to.emit(carPooling, 'RideJoined').withArgs(0, user2.address);
+        await expect(carPooling.connect(user2).joinRide(0, { value: ethers.parseEther("10") })).to.emit(carPooling, 'RideJoined').withArgs(0, user2.address);
         balanceAfter = await ethers.provider.getBalance(carPooling.getAddress());
         // Check: Joined ride should transfer funds to contract
         expect(balanceAfter).to.equal(balanceBefore + ethers.parseEther("10"));
@@ -124,7 +124,7 @@ describe("CarPooling and carPoolingCoordination", function () {
         });
         // Check: Full ride should change status to booking closed
         await carPooling.connect(user3).passengerRegister();
-        expect(await carPooling.connect(user3).joinRide(0, {value: ethers.parseEther("10")})).to.emit(carPooling, 'RideJoined').withArgs(0, user3.address);
+        expect(await carPooling.connect(user3).joinRide(0, { value: ethers.parseEther("10") })).to.emit(carPooling, 'RideJoined').withArgs(0, user3.address);
         await carPooling.getRideById(0).then((ride) => {
             expect(ride.status).to.equal(1);
         });
